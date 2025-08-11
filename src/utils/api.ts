@@ -106,7 +106,7 @@ export const apiService = {
   createUser: (payload: {
     email: string;
     password: string;
-    role?: "user" | "admin" | "superadmin";
+    role?: "users" | "admin" | "superadmin";
     client_slug?: string;
   }) => api.post("/admin/users", payload),
 };
