@@ -1,9 +1,12 @@
+export type BaseName = "homecenter" | "mercado";
+
 export interface ProdutoEncontrado {
   id: number;
   codauxiliar: string;
   codprod: string;
   descricao: string;
   datahora: string;
+  base?: BaseName;
 }
 
 export interface ProdutoNaoEncontrado {
@@ -11,6 +14,7 @@ export interface ProdutoNaoEncontrado {
   codauxiliar: string;
   descricao: string | null;
   datahora: string;
+  base?: BaseName;
 }
 
 export interface SearchResult {
@@ -23,6 +27,6 @@ export interface FilterOptions {
   searchTerm: string;
   dateFrom: string;
   dateTo: string;
-  sortBy: 'date' | 'code' | 'description';
-  sortOrder: 'asc' | 'desc';
+  sortBy: "date" | "code" | "description";
+  sortOrder: "asc" | "desc";
 }
