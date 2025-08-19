@@ -1,11 +1,12 @@
-// src/utils/api.ts (bases + JWT + env) — atualizado
+// src/utils/api.ts
 import axios, { AxiosError, AxiosResponse } from "axios";
 
+/* -------------------- BASE URL -------------------- */
 const VITE_API_URL = (import.meta as any).env?.VITE_API_URL as
   | string
   | undefined;
 
-// Se não tiver .env, usa backend local como padrão
+// Se não tiver .env, usa ngrok como padrão
 const BASE_URL =
   VITE_API_URL && VITE_API_URL.trim() !== ""
     ? VITE_API_URL
@@ -13,12 +14,14 @@ const BASE_URL =
 
 const isNgrok = /ngrok(-free)?\.app/i.test(BASE_URL);
 
+/* -------------------- AXIOS INSTANCE -------------------- */
 export const api = axios.create({
   baseURL: BASE_URL,
   headers: {
     "Content-Type": "application/json",
-    // vamos setar esse header só quando for ngrok (via interceptor abaixo)
   },
+  // timeout opcional para evitar pendurar
+  timeout: 30000,
 });
 
 // ---- request interceptor (ngrok header dinâmico) ----
@@ -33,7 +36,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// ---- auth helpers ----
+/* -------------------- AUTH HELPERS -------------------- */
 export const setAuthToken = (token: string | null) => {
   if (token) {
     api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
@@ -48,7 +51,7 @@ export const setAuthToken = (token: string | null) => {
 const saved = localStorage.getItem("sb_token");
 if (saved) setAuthToken(saved);
 
-// ---- response interceptors ----
+/* -------------------- INTERCEPTOR DE RESPOSTA -------------------- */
 api.interceptors.response.use(
   (response: AxiosResponse) => response,
   (error: AxiosError) => {
@@ -66,16 +69,76 @@ api.interceptors.response.use(
   }
 );
 
-// ---- tipos ----
+/* -------------------- TIPOS -------------------- */
 export type BaseName = "homecenter" | "mercado";
 
-// ---- endpoints ----
+export type EncontradoItem = {
+  id: number;
+  client_id: number;
+  base: string;
+  codauxiliar: string;
+  codprod: string;
+  descricao: string | null;
+  datahora: string;
+};
+
+export type NaoEncontradoItem = {
+  id: number;
+  client_id: number;
+  base: string;
+  codauxiliar: string;
+  descricao: string | null;
+  datahora: string;
+};
+
+export type CursorPage<T> = {
+  items: T[];
+  per_page: number;
+  next_cursor_id?: number | null;
+  mode: "cursor" | "offset";
+};
+
+export type PagedOffset<T> = {
+  items: T[];
+  page: number;
+  per_page: number;
+  total: number;
+  pages: number;
+  has_next: boolean;
+  has_prev: boolean;
+  mode: "offset";
+};
+
+export type MeResponse = {
+  email?: string;
+  role?: "superadmin" | "admin" | "user";
+  client_slug?: string | null;
+};
+
+/* -------------------- ENDPOINTS -------------------- */
 export const apiService = {
-  // auth
+  // ---------- auth ----------
   login: (email: string, password: string) =>
     api.post("/auth/login", { email, password }),
 
-  // produto
+  // Endpoint para validar token e obter dados do usuário.
+  // Tenta primeiro /auth/me; se não existir (404), tenta /auth/validate.
+  validateToken: async () => {
+    try {
+      return await api.get<MeResponse>("/auth/me");
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        // fallback em APIs que usam outro caminho
+        return api.get<MeResponse>("/auth/validate");
+      }
+      throw err;
+    }
+  },
+
+  // (opcional) alias direto
+  getMe: () => api.get<MeResponse>("/auth/me"),
+
+  // ---------- produto ----------
   searchProduct: (
     base: BaseName,
     code: string,
@@ -90,23 +153,80 @@ export const apiService = {
     );
   },
 
-  // histórico
+  // ---------- histórico via CURSOR ----------
+  getEncontradosCursor: (
+    base?: BaseName,
+    cursorId?: number | null,
+    perPage = 50
+  ) => {
+    const params = new URLSearchParams();
+    params.set("per_page", String(perPage));
+    if (base) params.set("base", base);
+    if (cursorId) params.set("cursor_id", String(cursorId));
+    return api.get<CursorPage<EncontradoItem>>(
+      `/sqlite/encontrados?${params.toString()}`
+    );
+    // esperado: { items, per_page, next_cursor_id, mode: "cursor" }
+  },
+
+  getNaoEncontradosCursor: (
+    base?: BaseName,
+    cursorId?: number | null,
+    perPage = 50
+  ) => {
+    const params = new URLSearchParams();
+    params.set("per_page", String(perPage));
+    if (base) params.set("base", base);
+    if (cursorId) params.set("cursor_id", String(cursorId));
+    return api.get<CursorPage<NaoEncontradoItem>>(
+      `/sqlite/nao-encontrados?${params.toString()}`
+    );
+  },
+
+  // ---------- pegar TOTAL (consultando no modo offset) ----------
+  getEncontradosTotal: async (base?: BaseName) => {
+    const params = new URLSearchParams();
+    params.set("page", "1");
+    params.set("per_page", "1");
+    if (base) params.set("base", base);
+    const { data } = await api.get<PagedOffset<EncontradoItem>>(
+      `/sqlite/encontrados?${params.toString()}`
+    );
+    return data.total ?? 0;
+  },
+
+  getNaoEncontradosTotal: async (base?: BaseName) => {
+    const params = new URLSearchParams();
+    params.set("page", "1");
+    params.set("per_page", "1");
+    if (base) params.set("base", base);
+    const { data } = await api.get<PagedOffset<NaoEncontradoItem>>(
+      `/sqlite/nao-encontrados?${params.toString()}`
+    );
+    return data.total ?? 0;
+  },
+
+  // ---------- legado sem paginação ----------
   getEncontrados: (base?: BaseName) =>
     api.get(`/sqlite/encontrados${base ? `?base=${base}` : ""}`),
+
   getNaoEncontrados: (base?: BaseName) =>
     api.get(`/sqlite/nao-encontrados${base ? `?base=${base}` : ""}`),
 
+  // ---------- CRUD ----------
   deleteEncontrado: (id: number) => api.delete(`/sqlite/encontrados/${id}`),
+
   deleteNaoEncontrado: (id: number) =>
     api.delete(`/sqlite/nao-encontrados/${id}`),
+
   updateNaoEncontrado: (id: number, descricao: string) =>
     api.patch(`/sqlite/nao-encontrados/${id}`, { descricao }),
 
-  // admin (superadmin pode passar client_slug)
+  // ---------- admin ----------
   createUser: (payload: {
     email: string;
     password: string;
-    role?: "users" | "admin" | "superadmin";
+    role?: "user" | "admin" | "superadmin";
     client_slug?: string;
   }) => api.post("/admin/users", payload),
 };

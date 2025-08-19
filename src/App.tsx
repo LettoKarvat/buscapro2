@@ -1,3 +1,4 @@
+// src/App.tsx
 import React, { useEffect, useState, useRef } from "react";
 import {
   Eye,
@@ -32,7 +33,7 @@ import {
 
 type Role = "superadmin" | "admin" | "user" | null;
 
-/* -------------------- LoginScreen (fora do App) -------------------- */
+/* -------------------- LoginScreen -------------------- */
 type LoginScreenProps = {
   email: string;
   password: string;
@@ -49,7 +50,7 @@ function LoginScreen({
 }: LoginScreenProps) {
   const emailRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    emailRef.current?.focus(); // foca só no primeiro mount
+    emailRef.current?.focus();
   }, []);
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
@@ -87,7 +88,7 @@ function LoginScreen({
     </div>
   );
 }
-/* ------------------------------------------------------------------- */
+/* ---------------------------------------------------- */
 
 function App() {
   // busca
@@ -97,7 +98,7 @@ function App() {
     null
   );
 
-  // base selecionada (persistida)
+  // base selecionada
   const [base, _setBase] = useState<BaseName>(
     () => (localStorage.getItem("sb_base") as BaseName) || "homecenter"
   );
@@ -106,11 +107,19 @@ function App() {
     localStorage.setItem("sb_base", b);
   };
 
-  // histórico
-  const [encontrados, setEncontrados] = useState<ProdutoEncontrado[]>([]);
-  const [naoEncontrados, setNaoEncontrados] = useState<ProdutoNaoEncontrado[]>(
-    []
-  );
+  // históricos (cursor)
+  const [encItems, setEncItems] = useState<ProdutoEncontrado[]>([]);
+  const [encNext, setEncNext] = useState<number | null>(null);
+  const [encLoading, setEncLoading] = useState(false);
+  const [encHasMore, setEncHasMore] = useState(true);
+  const [encTotal, setEncTotal] = useState(0); // << total
+
+  const [naoItems, setNaoItems] = useState<ProdutoNaoEncontrado[]>([]);
+  const [naoNext, setNaoNext] = useState<number | null>(null);
+  const [naoLoading, setNaoLoading] = useState(false);
+  const [naoHasMore, setNaoHasMore] = useState(true);
+  const [naoTotal, setNaoTotal] = useState(0); // << total
+
   const [showHistory, setShowHistory] = useState(true);
   const [filters, setFilters] = useState<FilterOptions>({
     searchTerm: "",
@@ -126,18 +135,18 @@ function App() {
   const [role, setRole] = useState<Role>(null);
   const [clientSlug, setClientSlug] = useState<string | null>(null);
 
-  // login form state
+  // login form
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // modal Novo Usuário (apenas superadmin)
+  // modal Novo Usuário
   const [showNewUser, setShowNewUser] = useState(false);
   const [nuEmail, setNuEmail] = useState("");
   const [nuPwd, setNuPwd] = useState("");
   const [nuRole, setNuRole] = useState<Exclude<Role, null>>("user");
   const [nuClientSlug, setNuClientSlug] = useState("");
 
-  // -------- Auth Gate: valida token ao iniciar --------
+  // -------- Auth Gate --------
   useEffect(() => {
     const saved = localStorage.getItem("sb_token");
     if (!saved) {
@@ -145,36 +154,47 @@ function App() {
       setAuthed(false);
       return;
     }
+
     setAuthToken(saved);
+
     (async () => {
       try {
-        const me = await apiService.validateToken(); // GET /auth/me (ou similar)
+        const me = await apiService.validateToken(); // precisa existir no api.ts
         setAuthed(true);
         setRole(me.data?.role as Role);
         setClientSlug(me.data?.client_slug ?? null);
         localStorage.setItem("sb_role", me.data?.role ?? "");
         localStorage.setItem("sb_client", me.data?.client_slug ?? "");
-      } catch {
-        logout(true); // token inválido
+      } catch (e: any) {
+        const code = e?.response?.status;
+        if (code === 401 || code === 403) {
+          // token inválido/expirado -> derruba
+          logout(true);
+        } else {
+          // falha de rede/CORS/timeout -> mantém sessão local
+          console.warn("Falha ao validar token (mantendo sessão local):", e);
+          setAuthed(true);
+          setRole((localStorage.getItem("sb_role") as Role) || null);
+          setClientSlug(localStorage.getItem("sb_client"));
+        }
       } finally {
         setAuthChecking(false);
       }
     })();
   }, []);
 
-  // helper: derruba sessão
   const logout = (silent = false) => {
     setAuthToken(null);
     setAuthed(false);
     setRole(null);
     setClientSlug(null);
+    setSearchResult(null);
     localStorage.removeItem("sb_token");
     localStorage.removeItem("sb_role");
     localStorage.removeItem("sb_client");
     if (!silent) alert("Sessão encerrada.");
   };
 
-  // helper: trata 401/403 e derruba sessão
   const handleAuthError = (e: any) => {
     const code = e?.response?.status;
     if (code === 401 || code === 403) {
@@ -184,30 +204,77 @@ function App() {
     return false;
   };
 
-  const loadHistory = async () => {
-    if (!authed) return;
+  // ---------- helpers de histórico ----------
+  const resetHistory = () => {
+    setEncItems([]);
+    setEncNext(null);
+    setEncHasMore(true);
+    setEncTotal(0);
+    setNaoItems([]);
+    setNaoNext(null);
+    setNaoHasMore(true);
+    setNaoTotal(0);
+  };
+
+  const loadTotals = async () => {
     try {
-      const [encResponse, naoResponse] = await Promise.all([
-        apiService.getEncontrados(base),
-        apiService.getNaoEncontrados(base),
+      const [t1, t2] = await Promise.all([
+        apiService.getEncontradosTotal(base),
+        apiService.getNaoEncontradosTotal(base),
       ]);
-      setEncontrados(Array.isArray(encResponse.data) ? encResponse.data : []);
-      setNaoEncontrados(
-        Array.isArray(naoResponse.data) ? naoResponse.data : []
-      );
+      setEncTotal(t1 || 0);
+      setNaoTotal(t2 || 0);
     } catch (e) {
-      if (!handleAuthError(e)) {
-        console.error("Erro ao carregar histórico:", e);
-      }
-      setEncontrados([]);
-      setNaoEncontrados([]);
+      console.error("Erro ao carregar totais:", e);
     }
   };
 
+  const loadEncMore = async () => {
+    if (encLoading || !encHasMore) return;
+    setEncLoading(true);
+    try {
+      const res = await apiService.getEncontradosCursor(base, encNext, 50);
+      const items = Array.isArray(res.data?.items) ? res.data.items : [];
+      setEncItems((prev) => [...prev, ...items]);
+      setEncNext(res.data?.next_cursor_id ?? null);
+      setEncHasMore(Boolean(res.data?.next_cursor_id));
+    } catch (e) {
+      if (!handleAuthError(e))
+        console.error("Erro ao carregar encontrados:", e);
+      setEncHasMore(false);
+    } finally {
+      setEncLoading(false);
+    }
+  };
+
+  const loadNaoMore = async () => {
+    if (naoLoading || !naoHasMore) return;
+    setNaoLoading(true);
+    try {
+      const res = await apiService.getNaoEncontradosCursor(base, naoNext, 50);
+      const items = Array.isArray(res.data?.items) ? res.data.items : [];
+      setNaoItems((prev) => [...prev, ...items]);
+      setNaoNext(res.data?.next_cursor_id ?? null);
+      setNaoHasMore(Boolean(res.data?.next_cursor_id));
+    } catch (e) {
+      if (!handleAuthError(e))
+        console.error("Erro ao carregar nao-encontrados:", e);
+      setNaoHasMore(false);
+    } finally {
+      setNaoLoading(false);
+    }
+  };
+
+  const loadHistoryFirstPage = async () => {
+    resetHistory();
+    await Promise.all([loadTotals(), loadEncMore(), loadNaoMore()]);
+  };
+
   useEffect(() => {
-    if (authed) loadHistory();
+    if (authed) loadHistoryFirstPage();
   }, [authed, base]);
 
+  // ---------- login/busca ----------
   const doLogin = async () => {
     try {
       const res = await apiService.login(email, password);
@@ -220,13 +287,12 @@ function App() {
       localStorage.setItem("sb_client", res.data.client_slug);
       setEmail("");
       setPassword("");
-      await loadHistory();
-    } catch (e) {
+      await loadHistoryFirstPage();
+    } catch {
       alert("Falha no login");
     }
   };
 
-  // busca usando base selecionada; com fallback para a outra base
   const searchProduct = async () => {
     if (!searchCode.trim()) return;
     setLoading(true);
@@ -250,7 +316,7 @@ function App() {
           ? `Consultando ${base} • Encontrado na base ${data._base}`
           : `Consultando ${base} • Produto encontrado`,
       });
-      await loadHistory();
+      await Promise.all([loadTotals(), loadHistoryFirstPage()]);
     } catch (error: any) {
       if (handleAuthError(error)) return;
       setSearchResult({
@@ -259,7 +325,7 @@ function App() {
           error?.response?.data?.detail ||
           "Produto não encontrado ou erro no servidor",
       });
-      await loadHistory();
+      await Promise.all([loadTotals(), loadHistoryFirstPage()]);
     } finally {
       setLoading(false);
     }
@@ -272,10 +338,12 @@ function App() {
     try {
       if (type === "encontrados") {
         await apiService.deleteEncontrado(id);
-        setEncontrados((prev) => prev.filter((i) => i.id !== id));
+        setEncItems((prev) => prev.filter((i) => i.id !== id));
+        setEncTotal((t) => Math.max(0, t - 1));
       } else {
         await apiService.deleteNaoEncontrado(id);
-        setNaoEncontrados((prev) => prev.filter((i) => i.id !== id));
+        setNaoItems((prev) => prev.filter((i) => i.id !== id));
+        setNaoTotal((t) => Math.max(0, t - 1));
       }
     } catch (e) {
       if (!handleAuthError(e)) console.error("Erro ao deletar:", e);
@@ -285,7 +353,7 @@ function App() {
   const updateDescription = async (id: number, description: string) => {
     try {
       await apiService.updateNaoEncontrado(id, description);
-      setNaoEncontrados((prev) =>
+      setNaoItems((prev) =>
         prev.map((i) => (i.id === id ? { ...i, descricao: description } : i))
       );
     } catch (e) {
@@ -293,86 +361,10 @@ function App() {
     }
   };
 
-  // guard-rails
-  const safeFilter = <T,>(arr: unknown) =>
-    Array.isArray(arr) ? (arr as T[]) : [];
-  const encontradosList = safeFilter<ProdutoEncontrado>(encontrados);
-  const naoEncontradosList = safeFilter<ProdutoNaoEncontrado>(naoEncontrados);
-
-  // criar usuário (superadmin)
-  const createNewUser = async () => {
-    try {
-      const payload: any = { email: nuEmail, password: nuPwd, role: nuRole };
-      if (role === "superadmin" && nuClientSlug.trim())
-        payload.client_slug = nuClientSlug.trim();
-      await apiService.createUser(payload);
-      setShowNewUser(false);
-      setNuEmail("");
-      setNuPwd("");
-      setNuRole("user");
-      setNuClientSlug("");
-      alert("Usuário criado com sucesso!");
-    } catch (e) {
-      if (!handleAuthError(e)) {
-        console.error(e);
-        alert("Falha ao criar usuário");
-      }
-    }
-  };
-
-  const SegmentedBaseToggle = () => {
-    const options: { key: BaseName; label: string; icon: JSX.Element }[] = [
-      {
-        key: "homecenter",
-        label: "Homecenter",
-        icon: <Building2 className="h-4 w-4" />,
-      },
-      { key: "mercado", label: "Mercado", icon: <Store className="h-4 w-4" /> },
-    ];
-    return (
-      <div
-        className="inline-flex items-center gap-1 rounded-2xl bg-white/70 backdrop-blur-md px-1 py-1 shadow-sm ring-1 ring-slate-200"
-        role="tablist"
-        aria-label="Selecionar base"
-      >
-        {options.map(({ key, label, icon }) => {
-          const isActive = base === key;
-          return (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => setBase(key)}
-              className={[
-                "group inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500",
-                isActive
-                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm ring-1 ring-blue-600"
-                  : "text-slate-700 hover:bg-slate-50",
-              ].join(" ")}
-            >
-              <span
-                className={[
-                  "rounded-lg p-1.5 transition",
-                  isActive
-                    ? "bg-white/20"
-                    : "bg-slate-100 group-hover:bg-slate-200",
-                ].join(" ")}
-              >
-                {icon}
-              </span>
-              <span>{label}</span>
-            </button>
-          );
-        })}
-      </div>
-    );
-  };
-
-  // enquanto valida token, não mostra nada (nem login)
+  // enquanto valida token, não mostra nada
   if (authChecking) return null;
 
-  // se não autenticado, mostra apenas a tela de login
+  // login
   if (!authed)
     return (
       <LoginScreen
@@ -479,15 +471,17 @@ function App() {
             defaultExpanded={false}
           >
             <ExportPanel
-              encontrados={encontradosList}
-              naoEncontrados={naoEncontradosList}
+              encontrados={encItems}
+              naoEncontrados={naoItems}
+              totalEncontrados={encTotal}
+              totalNaoEncontrados={naoTotal}
             />
           </CollapsibleSection>
         </div>
 
         <div className="text-center my-6">
           <button
-            onClick={loadHistory}
+            onClick={() => loadHistoryFirstPage()}
             className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700 shadow"
           >
             <RefreshCw className="h-5 w-5" /> Atualizar Histórico
@@ -501,17 +495,21 @@ function App() {
                 <div className="flex items-center gap-2">
                   <CheckCircle className="h-5 w-5 text-emerald-600" />
                   <span>Produtos Encontrados</span>
-                  <span className="ml-2 inline-flex items-center justify-center min-w-[32px] h-6 text-xs rounded-full bg-emerald-100 text-emerald-700 px-2">
-                    {encontradosList.length}
+                  <span className="ml-2 inline-flex items-center justify-center min-w-[48px] h-6 text-xs rounded-full bg-emerald-100 text-emerald-700 px-2">
+                    {encItems.length} / {encTotal}
                   </span>
                 </div>
               }
               defaultExpanded
             >
               <ProductList
-                items={encontradosList}
+                items={encItems}
                 type="encontrados"
+                total={encTotal}
                 onDelete={(id) => deleteItem(id, "encontrados")}
+                onLoadMore={loadEncMore}
+                hasMore={encHasMore}
+                loadingMore={encLoading}
               />
             </CollapsibleSection>
 
@@ -520,18 +518,22 @@ function App() {
                 <div className="flex items-center gap-2">
                   <XCircle className="h-5 w-5 text-red-600" />
                   <span>Produtos Não Encontrados</span>
-                  <span className="ml-2 inline-flex items-center justify-center min-w-[32px] h-6 text-xs rounded-full bg-red-100 text-red-700 px-2">
-                    {naoEncontradosList.length}
+                  <span className="ml-2 inline-flex items-center justify-center min-w-[48px] h-6 text-xs rounded-full bg-red-100 text-red-700 px-2">
+                    {naoItems.length} / {naoTotal}
                   </span>
                 </div>
               }
               defaultExpanded={false}
             >
               <ProductList
-                items={naoEncontradosList}
+                items={naoItems}
                 type="nao-encontrados"
+                total={naoTotal}
                 onDelete={(id) => deleteItem(id, "nao-encontrados")}
                 onUpdateDescription={updateDescription}
+                onLoadMore={loadNaoMore}
+                hasMore={naoHasMore}
+                loadingMore={naoLoading}
               />
             </CollapsibleSection>
           </div>
@@ -546,7 +548,7 @@ function App() {
         </div>
       </div>
 
-      {/* modal novo usuário (superadmin) */}
+      {/* modal novo usuário */}
       {showNewUser && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
@@ -591,7 +593,7 @@ function App() {
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700"
-                  onClick={createNewUser}
+                  onClick={() => createNewUser()}
                 >
                   Criar
                 </button>
@@ -602,6 +604,75 @@ function App() {
       )}
     </div>
   );
+
+  async function createNewUser() {
+    try {
+      const payload: any = { email: nuEmail, password: nuPwd, role: nuRole };
+      if (role === "superadmin" && nuClientSlug.trim())
+        payload.client_slug = nuClientSlug.trim();
+      await apiService.createUser(payload);
+      setShowNewUser(false);
+      setNuEmail("");
+      setNuPwd("");
+      setNuRole("user");
+      setNuClientSlug("");
+      alert("Usuário criado com sucesso!");
+    } catch (e) {
+      if (!handleAuthError(e)) {
+        console.error(e);
+        alert("Falha ao criar usuário");
+      }
+    }
+  }
+
+  function SegmentedBaseToggle() {
+    const options: { key: BaseName; label: string; icon: JSX.Element }[] = [
+      {
+        key: "homecenter",
+        label: "Homecenter",
+        icon: <Building2 className="h-4 w-4" />,
+      },
+      { key: "mercado", label: "Mercado", icon: <Store className="h-4 w-4" /> },
+    ];
+    return (
+      <div
+        className="inline-flex items-center gap-1 rounded-2xl bg-white/70 backdrop-blur-md px-1 py-1 shadow-sm ring-1 ring-slate-200"
+        role="tablist"
+        aria-label="Selecionar base"
+      >
+        {options.map(({ key, label, icon }) => {
+          const isActive = base === key;
+          return (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setBase(key)}
+              className={[
+                "group inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500",
+                isActive
+                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm ring-1 ring-blue-600"
+                  : "text-slate-700 hover:bg-slate-50",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "rounded-lg p-1.5 transition",
+                  isActive
+                    ? "bg-white/20"
+                    : "bg-slate-100 group-hover:bg-slate-200",
+                ].join(" ")}
+              >
+                {icon}
+              </span>
+              <span>{label}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
 }
 
 export default App;
