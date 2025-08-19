@@ -60,7 +60,7 @@ function LoginScreen({
           className="mx-auto h-20 mb-4 object-contain select-none"
           draggable={false}
         />
-        <h3 className="text-lg font-semibold mb-4 text-center">Acessar</h3>
+        <h3 className="text-lg font-semibold mb-4 text-center">Entrar</h3>
         <div className="space-y-3">
           <input
             ref={emailRef}
