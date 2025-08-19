@@ -9,7 +9,7 @@ const VITE_API_URL = (import.meta as any).env?.VITE_API_URL as
 const BASE_URL =
   VITE_API_URL && VITE_API_URL.trim() !== ""
     ? VITE_API_URL
-    : "http://localhost:5001";
+    : "https://fbfe700aaf1e.ngrok-free.app";
 
 const isNgrok = /ngrok(-free)?\.app/i.test(BASE_URL);
 
