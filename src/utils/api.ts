@@ -17,21 +17,21 @@ const isNgrok = /ngrok(-free)?\.app/i.test(BASE_URL);
 /* -------------------- AXIOS INSTANCE -------------------- */
 export const api = axios.create({
   baseURL: BASE_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-  // timeout opcional para evitar pendurar
+  headers: { "Content-Type": "application/json" },
   timeout: 30000,
 });
 
-// ---- request interceptor (ngrok header dinâmico) ----
+// Garante o header em TODAS as requisições (inclusive a 1ª)
+if (isNgrok) {
+  (api.defaults.headers.common as any)["ngrok-skip-browser-warning"] = "true";
+}
+
+// ---- request interceptor (mantém/limpa o header conforme o host) ----
 api.interceptors.request.use((config) => {
   if (isNgrok) {
     (config.headers as any)["ngrok-skip-browser-warning"] = "true";
-  } else {
-    if ((config.headers as any)["ngrok-skip-browser-warning"]) {
-      delete (config.headers as any)["ngrok-skip-browser-warning"];
-    }
+  } else if ((config.headers as any)["ngrok-skip-browser-warning"]) {
+    delete (config.headers as any)["ngrok-skip-browser-warning"];
   }
   return config;
 });
@@ -121,21 +121,18 @@ export const apiService = {
   login: (email: string, password: string) =>
     api.post("/auth/login", { email, password }),
 
-  // Endpoint para validar token e obter dados do usuário.
-  // Tenta primeiro /auth/me; se não existir (404), tenta /auth/validate.
+  // Tenta primeiro /auth/me; se 404, cai no /auth/validate
   validateToken: async () => {
     try {
       return await api.get<MeResponse>("/auth/me");
     } catch (err: any) {
       if (err?.response?.status === 404) {
-        // fallback em APIs que usam outro caminho
         return api.get<MeResponse>("/auth/validate");
       }
       throw err;
     }
   },
 
-  // (opcional) alias direto
   getMe: () => api.get<MeResponse>("/auth/me"),
 
   // ---------- produto ----------
@@ -166,7 +163,6 @@ export const apiService = {
     return api.get<CursorPage<EncontradoItem>>(
       `/sqlite/encontrados?${params.toString()}`
     );
-    // esperado: { items, per_page, next_cursor_id, mode: "cursor" }
   },
 
   getNaoEncontradosCursor: (
@@ -183,7 +179,7 @@ export const apiService = {
     );
   },
 
-  // ---------- pegar TOTAL (consultando no modo offset) ----------
+  // ---------- pegar TOTAL (offset) ----------
   getEncontradosTotal: async (base?: BaseName) => {
     const params = new URLSearchParams();
     params.set("page", "1");
@@ -215,10 +211,8 @@ export const apiService = {
 
   // ---------- CRUD ----------
   deleteEncontrado: (id: number) => api.delete(`/sqlite/encontrados/${id}`),
-
   deleteNaoEncontrado: (id: number) =>
     api.delete(`/sqlite/nao-encontrados/${id}`),
-
   updateNaoEncontrado: (id: number, descricao: string) =>
     api.patch(`/sqlite/nao-encontrados/${id}`, { descricao }),
 
