@@ -6,32 +6,36 @@ const VITE_API_URL = (import.meta as any).env?.VITE_API_URL as
   | string
   | undefined;
 
-// Se não tiver .env, usa ngrok como padrão
 const BASE_URL =
   VITE_API_URL && VITE_API_URL.trim() !== ""
     ? VITE_API_URL
     : "https://untappable-terina-heavenly.ngrok-free.dev";
 
-const isNgrok = /ngrok(-free)?\.app/i.test(BASE_URL);
+// reconhece qualquer domínio do ngrok (app/dev/ngrok.io)
+const isNgrok = /(\.|^)ngrok(-free)?\.(app|dev)$|(\.|^)ngrok\.io$/i.test(
+  new URL(BASE_URL).host
+);
 
-/* -------------------- AXIOS INSTANCE -------------------- */
+/* -------------------- AXIOS INSTANCE ------------------- */
 export const api = axios.create({
   baseURL: BASE_URL,
   headers: { "Content-Type": "application/json" },
   timeout: 30000,
 });
 
-// Garante o header em TODAS as requisições (inclusive a 1ª)
+// garante header em TODAS as requisições (inclusive a 1ª)
 if (isNgrok) {
   (api.defaults.headers.common as any)["ngrok-skip-browser-warning"] = "true";
 }
 
-// ---- request interceptor (mantém/limpa o header conforme o host) ----
+// request interceptor
 api.interceptors.request.use((config) => {
   if (isNgrok) {
     (config.headers as any)["ngrok-skip-browser-warning"] = "true";
-  } else if ((config.headers as any)["ngrok-skip-browser-warning"]) {
-    delete (config.headers as any)["ngrok-skip-browser-warning"];
+  } else {
+    if ((config.headers as any)["ngrok-skip-browser-warning"]) {
+      delete (config.headers as any)["ngrok-skip-browser-warning"];
+    }
   }
   return config;
 });
@@ -110,7 +114,6 @@ export type PagedOffset<T> = {
 };
 
 export type MeResponse = {
-  email?: string;
   role?: "superadmin" | "admin" | "user";
   client_slug?: string | null;
 };
@@ -121,15 +124,21 @@ export const apiService = {
   login: (email: string, password: string) =>
     api.post("/auth/login", { email, password }),
 
-  // Tenta primeiro /auth/me; se 404, cai no /auth/validate
-  validateToken: async () => {
+  // Nunca trava a tela: se /auth/me falhar, retorna null
+  validateToken: async (): Promise<MeResponse | null> => {
     try {
-      return await api.get<MeResponse>("/auth/me");
+      const { data } = await api.get<MeResponse>("/auth/me");
+      return data;
     } catch (err: any) {
       if (err?.response?.status === 404) {
-        return api.get<MeResponse>("/auth/validate");
+        try {
+          const { data } = await api.get<MeResponse>("/auth/validate");
+          return data;
+        } catch {
+          return null;
+        }
       }
-      throw err;
+      return null;
     }
   },
 
@@ -154,12 +163,14 @@ export const apiService = {
   getEncontradosCursor: (
     base?: BaseName,
     cursorId?: number | null,
-    perPage = 50
+    perPage = 50,
+    all?: boolean // permite superadmin ver global
   ) => {
     const params = new URLSearchParams();
     params.set("per_page", String(perPage));
     if (base) params.set("base", base);
     if (cursorId) params.set("cursor_id", String(cursorId));
+    if (all) params.set("all", "1");
     return api.get<CursorPage<EncontradoItem>>(
       `/sqlite/encontrados?${params.toString()}`
     );
@@ -168,34 +179,38 @@ export const apiService = {
   getNaoEncontradosCursor: (
     base?: BaseName,
     cursorId?: number | null,
-    perPage = 50
+    perPage = 50,
+    all?: boolean
   ) => {
     const params = new URLSearchParams();
     params.set("per_page", String(perPage));
     if (base) params.set("base", base);
     if (cursorId) params.set("cursor_id", String(cursorId));
+    if (all) params.set("all", "1");
     return api.get<CursorPage<NaoEncontradoItem>>(
       `/sqlite/nao-encontrados?${params.toString()}`
     );
   },
 
   // ---------- pegar TOTAL (offset) ----------
-  getEncontradosTotal: async (base?: BaseName) => {
+  getEncontradosTotal: async (base?: BaseName, all?: boolean) => {
     const params = new URLSearchParams();
     params.set("page", "1");
     params.set("per_page", "1");
     if (base) params.set("base", base);
+    if (all) params.set("all", "1");
     const { data } = await api.get<PagedOffset<EncontradoItem>>(
       `/sqlite/encontrados?${params.toString()}`
     );
     return data.total ?? 0;
   },
 
-  getNaoEncontradosTotal: async (base?: BaseName) => {
+  getNaoEncontradosTotal: async (base?: BaseName, all?: boolean) => {
     const params = new URLSearchParams();
     params.set("page", "1");
     params.set("per_page", "1");
     if (base) params.set("base", base);
+    if (all) params.set("all", "1");
     const { data } = await api.get<PagedOffset<NaoEncontradoItem>>(
       `/sqlite/nao-encontrados?${params.toString()}`
     );
@@ -203,11 +218,29 @@ export const apiService = {
   },
 
   // ---------- legado sem paginação ----------
-  getEncontrados: (base?: BaseName) =>
-    api.get(`/sqlite/encontrados${base ? `?base=${base}` : ""}`),
+  getEncontrados: (base?: BaseName, all?: boolean) =>
+    api.get(
+      `/sqlite/encontrados${
+        base || all
+          ? `?${new URLSearchParams({
+              ...(base ? { base } : {}),
+              ...(all ? { all: "1" } : {}),
+            }).toString()}`
+          : ""
+      }`
+    ),
 
-  getNaoEncontrados: (base?: BaseName) =>
-    api.get(`/sqlite/nao-encontrados${base ? `?base=${base}` : ""}`),
+  getNaoEncontrados: (base?: BaseName, all?: boolean) =>
+    api.get(
+      `/sqlite/nao-encontrados${
+        base || all
+          ? `?${new URLSearchParams({
+              ...(base ? { base } : {}),
+              ...(all ? { all: "1" } : {}),
+            }).toString()}`
+          : ""
+      }`
+    ),
 
   // ---------- CRUD ----------
   deleteEncontrado: (id: number) => api.delete(`/sqlite/encontrados/${id}`),
