@@ -256,7 +256,12 @@ export const apiService = {
     if (opts?.dateFrom) params.set("date_from", opts.dateFrom);
     if (opts?.dateTo) params.set("date_to", opts.dateTo);
     return api.get<{
-      encontrados: EncontradoItem[];
+      encontrados: (EncontradoItem & {
+        _produto?: {
+          pcprodut: Record<string, unknown>;
+          pcembalagem: Record<string, unknown>;
+        };
+      })[];
       nao_encontrados: NaoEncontradoItem[];
     }>(`/sqlite/export?${params.toString()}`);
   },
