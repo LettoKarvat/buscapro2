@@ -470,12 +470,7 @@ function App() {
             icon={<Download className="h-5 w-5 text-gray-600" />}
             defaultExpanded={false}
           >
-            <ExportPanel
-              encontrados={encItems}
-              naoEncontrados={naoItems}
-              totalEncontrados={encTotal}
-              totalNaoEncontrados={naoTotal}
-            />
+            <ExportPanel base={base} />
           </CollapsibleSection>
         </div>
 
