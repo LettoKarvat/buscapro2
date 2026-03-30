@@ -249,6 +249,18 @@ export const apiService = {
   updateNaoEncontrado: (id: number, descricao: string) =>
     api.patch(`/sqlite/nao-encontrados/${id}`, { descricao }),
 
+  // ---------- export ----------
+  exportData: (opts?: { base?: BaseName; dateFrom?: string; dateTo?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.base) params.set("base", opts.base);
+    if (opts?.dateFrom) params.set("date_from", opts.dateFrom);
+    if (opts?.dateTo) params.set("date_to", opts.dateTo);
+    return api.get<{
+      encontrados: EncontradoItem[];
+      nao_encontrados: NaoEncontradoItem[];
+    }>(`/sqlite/export?${params.toString()}`);
+  },
+
   // ---------- admin ----------
   createUser: (payload: {
     email: string;
