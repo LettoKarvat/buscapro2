@@ -1,46 +1,111 @@
-import * as XLSX from 'xlsx';
-import { ProdutoEncontrado, ProdutoNaoEncontrado } from '../types';
+import * as XLSX from "xlsx";
 
-export const exportToExcel = (
-  encontrados: ProdutoEncontrado[],
-  naoEncontrados: ProdutoNaoEncontrado[]
-) => {
-  const workbook = XLSX.utils.book_new();
+type EncontradoRow = {
+  id: number;
+  client_id: number;
+  base: string;
+  codauxiliar: string;
+  codprod: string;
+  descricao: string | null;
+  datahora: string;
+};
 
-  // Planilha de produtos encontrados
-  const encontradosData = encontrados.map(item => ({
-    'ID': item.id,
-    'Código Auxiliar': item.codauxiliar,
-    'Código Produto': item.codprod,
-    'Descrição': item.descricao,
-    'Data/Hora': new Date(item.datahora).toLocaleString('pt-BR')
+type NaoEncontradoRow = {
+  id: number;
+  client_id: number;
+  base: string;
+  codauxiliar: string;
+  descricao: string | null;
+  datahora: string;
+};
+
+function fmtDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function fmtPeriod(from: string, to: string): string {
+  const parts: string[] = [];
+  if (from) {
+    const [y, m, d] = from.split("-");
+    parts.push(`${d}/${m}/${y}`);
+  }
+  if (to) {
+    const [y, m, d] = to.split("-");
+    parts.push(`${d}/${m}/${y}`);
+  }
+  if (parts.length === 2) return `${parts[0]} até ${parts[1]}`;
+  if (parts.length === 1) return from ? `A partir de ${parts[0]}` : `Até ${parts[0]}`;
+  return "Todos os registros";
+}
+
+function setColWidths(ws: XLSX.WorkSheet, widths: number[]) {
+  ws["!cols"] = widths.map((w) => ({ wch: w }));
+}
+
+export function exportToExcel(
+  encontrados: EncontradoRow[],
+  naoEncontrados: NaoEncontradoRow[],
+  dateFrom?: string,
+  dateTo?: string
+) {
+  const wb = XLSX.utils.book_new();
+  const periodo = fmtPeriod(dateFrom ?? "", dateTo ?? "");
+
+  // ── Aba: Encontrados ──
+  const encData = encontrados.map((item) => ({
+    "Código Auxiliar": item.codauxiliar,
+    "Código Produto": item.codprod,
+    Descrição: item.descricao ?? "",
+    Base: item.base,
+    "Data/Hora": fmtDate(item.datahora),
   }));
 
-  const encontradosWs = XLSX.utils.json_to_sheet(encontradosData);
-  XLSX.utils.book_append_sheet(workbook, encontradosWs, 'Produtos Encontrados');
+  const wsEnc = XLSX.utils.json_to_sheet(encData);
+  setColWidths(wsEnc, [20, 18, 45, 14, 22]);
+  XLSX.utils.book_append_sheet(wb, wsEnc, "Encontrados");
 
-  // Planilha de produtos não encontrados
-  const naoEncontradosData = naoEncontrados.map(item => ({
-    'ID': item.id,
-    'Código Auxiliar': item.codauxiliar,
-    'Descrição': item.descricao || 'Sem descrição',
-    'Data/Hora': new Date(item.datahora).toLocaleString('pt-BR')
+  // ── Aba: Não Encontrados ──
+  const naoData = naoEncontrados.map((item) => ({
+    "Código Auxiliar": item.codauxiliar,
+    Descrição: item.descricao ?? "Sem descrição",
+    Base: item.base,
+    "Data/Hora": fmtDate(item.datahora),
   }));
 
-  const naoEncontradosWs = XLSX.utils.json_to_sheet(naoEncontradosData);
-  XLSX.utils.book_append_sheet(workbook, naoEncontradosWs, 'Produtos Não Encontrados');
+  const wsNao = XLSX.utils.json_to_sheet(naoData);
+  setColWidths(wsNao, [20, 45, 14, 22]);
+  XLSX.utils.book_append_sheet(wb, wsNao, "Não Encontrados");
 
-  // Resumo estatístico
+  // ── Aba: Resumo ──
+  const total = encontrados.length + naoEncontrados.length;
+  const taxa = total > 0 ? ((encontrados.length / total) * 100).toFixed(1) + "%" : "—";
+
   const resumoData = [
-    { 'Tipo': 'Produtos Encontrados', 'Quantidade': encontrados.length },
-    { 'Tipo': 'Produtos Não Encontrados', 'Quantidade': naoEncontrados.length },
-    { 'Tipo': 'Total de Buscas', 'Quantidade': encontrados.length + naoEncontrados.length }
+    { Indicador: "Período", Valor: periodo },
+    { Indicador: "Total de buscas", Valor: String(total) },
+    { Indicador: "Encontrados", Valor: String(encontrados.length) },
+    { Indicador: "Não encontrados", Valor: String(naoEncontrados.length) },
+    { Indicador: "Taxa de sucesso", Valor: taxa },
+    { Indicador: "Data de exportação", Valor: fmtDate(new Date().toISOString()) },
   ];
 
-  const resumoWs = XLSX.utils.json_to_sheet(resumoData);
-  XLSX.utils.book_append_sheet(workbook, resumoWs, 'Resumo');
+  const wsRes = XLSX.utils.json_to_sheet(resumoData);
+  setColWidths(wsRes, [22, 30]);
+  XLSX.utils.book_append_sheet(wb, wsRes, "Resumo");
 
-  // Salvar arquivo
-  const fileName = `produtos_${new Date().toISOString().split('T')[0]}.xlsx`;
-  XLSX.writeFile(workbook, fileName);
-};
+  // ── Salvar ──
+  const dateStr = new Date().toISOString().split("T")[0];
+  XLSX.writeFile(wb, `buscapro_${dateStr}.xlsx`);
+}
