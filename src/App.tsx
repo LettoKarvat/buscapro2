@@ -13,6 +13,8 @@ import {
   UserPlus,
   Store,
   Building2,
+  ScanLine,
+  Ban,
 } from "lucide-react";
 import logo from "./assets/faiveslogo.png";
 
@@ -22,6 +24,7 @@ import { FilterPanel } from "./components/FilterPanel";
 import { ProductList } from "./components/ProductList";
 import { ExportPanel } from "./components/ExportPanel";
 import { CollapsibleSection } from "./components/CollapsibleSection";
+import { CancelPanel } from "./components/CancelPanel";
 
 import { apiService, setAuthToken, BaseName } from "./utils/api";
 import {
@@ -32,6 +35,7 @@ import {
 } from "./types";
 
 type Role = "superadmin" | "admin" | "user" | null;
+type Tab = "consultar" | "cancelar";
 
 /* -------------------- LoginScreen -------------------- */
 type LoginScreenProps = {
@@ -91,12 +95,22 @@ function LoginScreen({
 /* ---------------------------------------------------- */
 
 function App() {
+  // aba ativa
+  const [tab, _setTab] = useState<Tab>("consultar");
+
   // busca
   const [searchCode, setSearchCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [searchResult, setSearchResult] = useState<SearchResultType | null>(
     null
   );
+
+  // trocar de aba limpa o que estava na tela, p/ não confundir os modos
+  const setTab = (t: Tab) => {
+    _setTab(t);
+    setSearchCode("");
+    setSearchResult(null);
+  };
 
   // base selecionada
   const [base, _setBase] = useState<BaseName>(
@@ -229,13 +243,20 @@ function App() {
     }
   };
 
-  const loadEncMore = async () => {
-    if (encLoading || !encHasMore) return;
+  // `reset` recarrega a 1ª página: ignora o hasMore atual (que ainda é o valor
+  // antigo logo depois do resetHistory) e troca a lista em vez de concatenar.
+  const loadEncMore = async (reset = false) => {
+    if (encLoading) return;
+    if (!reset && !encHasMore) return;
     setEncLoading(true);
     try {
-      const res = await apiService.getEncontradosCursor(base, encNext, 50);
+      const res = await apiService.getEncontradosCursor(
+        base,
+        reset ? null : encNext,
+        50
+      );
       const items = Array.isArray(res.data?.items) ? res.data.items : [];
-      setEncItems((prev) => [...prev, ...items]);
+      setEncItems((prev) => (reset ? items : [...prev, ...items]));
       setEncNext(res.data?.next_cursor_id ?? null);
       setEncHasMore(Boolean(res.data?.next_cursor_id));
     } catch (e) {
@@ -247,13 +268,18 @@ function App() {
     }
   };
 
-  const loadNaoMore = async () => {
-    if (naoLoading || !naoHasMore) return;
+  const loadNaoMore = async (reset = false) => {
+    if (naoLoading) return;
+    if (!reset && !naoHasMore) return;
     setNaoLoading(true);
     try {
-      const res = await apiService.getNaoEncontradosCursor(base, naoNext, 50);
+      const res = await apiService.getNaoEncontradosCursor(
+        base,
+        reset ? null : naoNext,
+        50
+      );
       const items = Array.isArray(res.data?.items) ? res.data.items : [];
-      setNaoItems((prev) => [...prev, ...items]);
+      setNaoItems((prev) => (reset ? items : [...prev, ...items]));
       setNaoNext(res.data?.next_cursor_id ?? null);
       setNaoHasMore(Boolean(res.data?.next_cursor_id));
     } catch (e) {
@@ -267,7 +293,7 @@ function App() {
 
   const loadHistoryFirstPage = async () => {
     resetHistory();
-    await Promise.all([loadTotals(), loadEncMore(), loadNaoMore()]);
+    await Promise.all([loadTotals(), loadEncMore(true), loadNaoMore(true)]);
   };
 
   useEffect(() => {
@@ -401,6 +427,10 @@ function App() {
             <div className="mt-5 flex justify-center">
               <SegmentedBaseToggle />
             </div>
+
+            <div className="mt-3 flex justify-center">
+              <TabToggle />
+            </div>
           </div>
 
           {/* ações canto superior direito */}
@@ -426,12 +456,16 @@ function App() {
 
       {/* CONTEÚDO */}
       <div className="container mx-auto px-4 pb-10">
-        <SearchBar
-          searchCode={searchCode}
-          setSearchCode={setSearchCode}
-          onSearch={searchProduct}
-          loading={loading}
-        />
+        {tab === "consultar" ? (
+          <SearchBar
+            searchCode={searchCode}
+            setSearchCode={setSearchCode}
+            onSearch={searchProduct}
+            loading={loading}
+          />
+        ) : (
+          <CancelPanel base={base} onCancelled={loadHistoryFirstPage} />
+        )}
 
         <div className="text-center mt-6">
           <button
@@ -450,7 +484,7 @@ function App() {
           </button>
         </div>
 
-        {searchResult && (
+        {tab === "consultar" && searchResult && (
           <div className="mt-6">
             <SearchResult result={searchResult} />
           </div>
@@ -502,7 +536,7 @@ function App() {
                 type="encontrados"
                 total={encTotal}
                 onDelete={(id) => deleteItem(id, "encontrados")}
-                onLoadMore={loadEncMore}
+                onLoadMore={() => loadEncMore()}
                 hasMore={encHasMore}
                 loadingMore={encLoading}
               />
@@ -526,7 +560,7 @@ function App() {
                 total={naoTotal}
                 onDelete={(id) => deleteItem(id, "nao-encontrados")}
                 onUpdateDescription={updateDescription}
-                onLoadMore={loadNaoMore}
+                onLoadMore={() => loadNaoMore()}
                 hasMore={naoHasMore}
                 loadingMore={naoLoading}
               />
@@ -618,6 +652,66 @@ function App() {
         alert("Falha ao criar usuário");
       }
     }
+  }
+
+  function TabToggle() {
+    const options: {
+      key: Tab;
+      label: string;
+      icon: JSX.Element;
+      activeClass: string;
+    }[] = [
+      {
+        key: "consultar",
+        label: "Consultar",
+        icon: <ScanLine className="h-4 w-4" />,
+        activeClass:
+          "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm ring-1 ring-blue-600",
+      },
+      {
+        key: "cancelar",
+        label: "Cancelar",
+        icon: <Ban className="h-4 w-4" />,
+        activeClass:
+          "bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-sm ring-1 ring-red-600",
+      },
+    ];
+    return (
+      <div
+        className="inline-flex items-center gap-1 rounded-2xl bg-white/70 backdrop-blur-md px-1 py-1 shadow-sm ring-1 ring-slate-200"
+        role="tablist"
+        aria-label="Selecionar modo"
+      >
+        {options.map(({ key, label, icon, activeClass }) => {
+          const isActive = tab === key;
+          return (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setTab(key)}
+              className={[
+                "group inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500",
+                isActive ? activeClass : "text-slate-700 hover:bg-slate-50",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "rounded-lg p-1.5 transition",
+                  isActive
+                    ? "bg-white/20"
+                    : "bg-slate-100 group-hover:bg-slate-200",
+                ].join(" ")}
+              >
+                {icon}
+              </span>
+              <span>{label}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
   }
 
   function SegmentedBaseToggle() {

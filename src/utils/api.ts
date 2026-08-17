@@ -118,6 +118,38 @@ export type MeResponse = {
   client_slug?: string | null;
 };
 
+/* ---- cancelamento (aba "Cancelar") ---- */
+export type RegistroTipo = "encontrados" | "nao-encontrados";
+
+export type RegistroLog = {
+  id: number;
+  client_id: number;
+  base: BaseName;
+  codauxiliar: string;
+  codprod?: string;
+  descricao: string | null;
+  datahora: string;
+  tipo: RegistroTipo;
+};
+
+export type RegistrosResponse = {
+  items: RegistroLog[];
+  count: number;
+  codauxiliar: string;
+  /** escopo da busca: base especifica ou null (todas). Repassar no delete. */
+  base_filtro: BaseName | null;
+  bases: BaseName[];
+};
+
+export type CancelamentoResponse = {
+  ok: boolean;
+  codauxiliar: string;
+  base: BaseName | null;
+  encontrados: number;
+  nao_encontrados: number;
+  removidos: number;
+};
+
 /* -------------------- ENDPOINTS -------------------- */
 export const apiService = {
   // ---------- auth ----------
@@ -241,6 +273,31 @@ export const apiService = {
           : ""
       }`
     ),
+
+  // ---------- cancelamento por código bipado ----------
+  /** Procura o código no histórico (encontrados + não encontrados). */
+  buscarRegistros: (
+    codaux: string,
+    base?: BaseName,
+    fallback = true
+  ) => {
+    const params = new URLSearchParams();
+    if (base) params.set("base", base);
+    params.set("fallback", fallback ? "1" : "0");
+    return api.get<RegistrosResponse>(
+      `/sqlite/registros/${encodeURIComponent(codaux)}?${params.toString()}`
+    );
+  },
+
+  /** Remove do histórico tudo que foi bipado com esse código. */
+  cancelarRegistros: (codaux: string, base?: BaseName | null) => {
+    const params = new URLSearchParams();
+    if (base) params.set("base", base);
+    const qs = params.toString();
+    return api.delete<CancelamentoResponse>(
+      `/sqlite/registros/${encodeURIComponent(codaux)}${qs ? `?${qs}` : ""}`
+    );
+  },
 
   // ---------- CRUD ----------
   deleteEncontrado: (id: number) => api.delete(`/sqlite/encontrados/${id}`),
